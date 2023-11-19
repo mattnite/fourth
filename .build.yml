@@ -1,0 +1,16 @@
+image: alpine/edge
+secrets:
+  - 1ba37fdb-7291-4a31-864d-ae7f92a452a8
+sources:
+  - git+ssh://git@git.sr.ht/~mattnite/fourth
+tasks:
+  - check: |
+      cd fourth
+      if [ "$(git rev-parse origin/main)" != "$(git rev-parse HEAD)" ]; then \
+        complete-build; \
+      fi
+  - mirror: |
+      cd fourth
+      git remote add github git@github.com:mattnite/fourth.git
+      ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+      git push github main
