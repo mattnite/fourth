@@ -5,7 +5,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    var repl = fourth.Repl.init(gpa.allocator());
+    var repl = try fourth.Repl.init(gpa.allocator());
     defer repl.deinit();
 
     var line_buf = std.ArrayList(u8).init(gpa.allocator());
@@ -29,5 +29,5 @@ pub fn main() !void {
         try stdout.writeAll("> OK\n");
     }
 
-    // read from stdin until you get a std
+    // read from stdin until exit
 }

@@ -19,6 +19,10 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(repl);
 
+    const run_repl = b.addRunArtifact(repl);
+    const run_step = b.step("run", "run repl");
+    run_step.dependOn(&run_repl.step);
+
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/fourth.zig" },
         .target = target,

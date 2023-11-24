@@ -4,33 +4,65 @@ const Allocator = std.mem.Allocator;
 const testing = std.testing;
 const assert = std.debug.assert;
 
-// TODO:
-//
-// need to consider how users are going to add builtins/native functions, and
-// what those look like besides the normal builtins
-
-pub const BuiltinFn = fn (*Repl) Repl.Error!void;
-
 pub const Repl = struct {
     gpa: Allocator,
-    symbols: std.StringArrayHashMap(WordId),
-    // TODO: keep old definitions
-    glossary: std.AutoArrayHashMap(WordId, Definition),
-    stack: std.ArrayList(Integer),
+    words: std.StringArrayHashMapUnmanaged(WordId) = .{},
+
+    primitives: std.AutoArrayHashMapUnmanaged(WordId, *const PrimitiveFn) = .{},
+    contexts: std.AutoArrayHashMapUnmanaged(WordId, *anyopaque) = .{},
+    signatures: std.AutoArrayHashMapUnmanaged(WordId, []const u8) = .{},
+    descriptions: std.AutoArrayHashMapUnmanaged(WordId, []const u8) = .{},
+
+    glossary: std.AutoArrayHashMapUnmanaged(WordId, Definition) = .{},
+    stack: std.ArrayListUnmanaged(Integer) = .{},
+    return_stack: std.ArrayListUnmanaged(Integer) = .{},
     count: u32,
 
-    state: union(enum) {
-        normal,
+    state: State,
+
+    const State = union(enum) {
+        execute,
         definition_start,
         definition_body: struct {
             word: []const u8,
             buffer: std.ArrayListUnmanaged(Entity),
         },
-    },
 
-    pub const Error = error{ StackUnderflow, OutOfMemory, DivisionByZero } || std.fs.File.WriteError;
+        pub fn format(
+            state: State,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
 
-    const Integer = i32;
+            switch (state) {
+                .execute => try writer.writeAll("EXECUTE"),
+                .definition_start => try writer.writeAll("DEFINITION_START"),
+                .definition_body => |body| try writer.print("DEFINITION_BODY(word={s} buffer_len={})", .{ body.word, body.buffer.items.len }),
+            }
+        }
+    };
+
+    pub const Error = error{
+        StackUnderflow,
+        OutOfMemory,
+        DivisionByZero,
+        InvalidInput,
+        SystemError,
+    } || std.fs.File.WriteError;
+
+    pub const PrimitiveFn = fn (*Repl, ?*anyopaque) Repl.Error!void;
+    pub const PrimitiveOptions = struct {
+        name: []const u8,
+        signature: ?[]const u8 = null,
+        description: ?[]const u8 = null,
+        func: *const PrimitiveFn,
+        ctx: ?*anyopaque = null,
+    };
+
+    pub const Integer = i32;
     const Definition = []const Entity;
     const Entity = struct {
         payload: union {
@@ -41,176 +73,92 @@ pub const Repl = struct {
             integer,
             word,
         },
+
+        pub fn format(
+            entity: Entity,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+
+            switch (entity.tag) {
+                .word => try writer.print("word: {}", .{entity.payload.word}),
+                .integer => try writer.print("integer: {}", .{entity.payload.integer}),
+            }
+        }
     };
 
     // TODO: pre define this function:
     // : .S CR 'S SO @ 2- DO I @ • -2 +LOOP ;~
 
-    const WordId = enum(u32) {
-        // arithmetic
-        @"*",
-        @"+",
-        @"-",
-        @".",
-        @"/",
-        //@"/MOD",
-        //MOD,
-        //@"1+",
-        //@"1-",
-        //@"2+",
-        //@"2-",
-        //@"2*",
-        //@"2/",
-        //ABS,
-        //NEGATE,
-        //MIN,
-        //MAX,
-        //@"*/",
-        //@"*/MOD",
-        //U.
-        //U*
-        //U/MOD
-        //U<
-        //
-
-        //// stack manipulation
-        DROP,
-        //@"2DROP",
-        DUP,
-        //@"2DUP",
-        //@"?DUP",
-        OVER,
-        //@"2OVER",
-        ROT,
-        SWAP,
-        //@"2SWAP",
-
-        // the return stack
-        //@">R",
-        //@"R>",
-        //I,
-        //@"I'",
-        //J,
-
-        // definitions
-        //FORGET,
+    /// members of this enum are keywords for the forth language. They need to
+    /// change state to be in this list.
+    pub const WordId = enum(u32) {
         @":",
-        //EMPTY,
-
-        // comments
-        //@"(",
-        //@")",
-
-        //// control flow
-        //IF,
-        //THEN,
-        //NOT,
-        //ELSE,
-        //DO,
-        //LOOP,
-        //@"+LOOP",
-        ///LOOP
-        //BEGIN
-        //UNTIL
-        //QUIT
-        //LEAVE
-        //PAGE
-        //QUIT
-        //WHILE
-        //REPEAT
-        //U.R
-
-        //// logical operators
-        //AND,
-        //OR,
-
-        //// comparison
-        //@"=",
-        //@"<",
-        //@">",
-        //@"0=",
-        //@"0<",
-        //@"0>",
-
-        //// misc editor commands
-        //@"^",
-
-        // editor
-        //LIST,
-        //LOAD,
-        //FLUSH,
-        //COPY,
-        //WIPE,
-
-        // line editing
-        //T,
-        //P,
-        //U,
-        //M,
-        //X,
-
-        // character editing
-        //F,
-        //S,
-        //E,
-        //D,
-        //TILL,
-        //I,
-        //R,
-
-        //@"ABORT\"",
-        //@"?STACK",
-        //EMIT
-        //BS
-        //LF
-        //CR
-        //NUMBER
-        //INTERPRET
-        //HEX
-        //OCTAL
-        //DECIMAL
-        //D.
-
-        // number formatting
-        //#
-        //<#
-        //#S
-        //c HOLD
-        //SIGN
-        //#>
-
-        // double-length operators
-        //
-
-        // if it's not a normal
+        @";",
+        IF,
+        THEN,
+        ELSE,
+        ABORT,
+        FORGET,
+        DEBUG,
         _,
     };
 
-    pub fn init(allocator: Allocator) Repl {
-        return Repl{
+    pub fn init(allocator: Allocator) !Repl {
+        var ret = Repl{
             .gpa = allocator,
-            .symbols = std.StringArrayHashMap(WordId).init(allocator),
-            .glossary = std.AutoArrayHashMap(WordId, Definition).init(allocator),
-            .stack = std.ArrayList(Integer).init(allocator),
             .count = 0,
-            .state = .{ .normal = {} },
+            .state = .{ .execute = {} },
         };
+        errdefer ret.deinit();
+
+        for (@import("primitives.zig").defaults) |prim|
+            try ret.add_primitive(prim);
+
+        return ret;
     }
 
     pub fn deinit(repl: *Repl) void {
+        for (repl.words.keys()) |key|
+            repl.gpa.free(key);
+
+        for (repl.signatures.values()) |sig|
+            repl.gpa.free(sig);
+
+        for (repl.descriptions.values()) |desc|
+            repl.gpa.free(desc);
+
         for (repl.glossary.values()) |definition|
             repl.gpa.free(definition);
 
-        for (repl.symbols.keys()) |key|
-            repl.symbols.allocator.free(key);
+        repl.words.deinit(repl.gpa);
 
-        repl.glossary.deinit();
-        repl.symbols.deinit();
-        repl.stack.deinit();
+        repl.primitives.deinit(repl.gpa);
+        repl.contexts.deinit(repl.gpa);
+        repl.signatures.deinit(repl.gpa);
+        repl.descriptions.deinit(repl.gpa);
+
+        repl.glossary.deinit(repl.gpa);
+        repl.stack.deinit(repl.gpa);
+        repl.return_stack.deinit(repl.gpa);
+    }
+
+    fn dump_state(repl: *Repl) !void {
+        const stderr = std.io.getStdErr().writer();
+        try stderr.print("state={}\n", .{repl.state});
+    }
+
+    fn create_word_id(repl: *Repl) WordId {
+        const word_id: WordId = @enumFromInt(@typeInfo(WordId).Enum.fields.len + repl.count);
+        repl.count += 1;
+        return word_id;
     }
 
     fn get_word_id(repl: *Repl, token: []const u8) ?WordId {
-        return std.meta.stringToEnum(WordId, token) orelse repl.symbols.get(token);
+        return std.meta.stringToEnum(WordId, token) orelse repl.words.get(token);
     }
 
     fn execute_word(repl: *Repl, word_id: WordId) !void {
@@ -225,38 +173,64 @@ pub const Repl = struct {
         });
 
         while (execute_stack.popOrNull()) |entity| switch (entity.tag) {
-            .integer => try repl.stack.append(entity.payload.integer),
-            .word => blk: {
-                inline for (@typeInfo(WordId).Enum.fields) |field| {
-                    if (@field(WordId, field.name) == entity.payload.word) {
-                        const builtin_fn = @field(builtins, field.name);
-                        try builtin_fn(repl);
-                        break :blk;
-                    }
-                }
-
-                const definition = repl.glossary.get(word_id).?;
+            .integer => try repl.stack.append(repl.gpa, entity.payload.integer),
+            .word => if (repl.primitives.get(entity.payload.word)) |func| {
+                try func(repl, repl.contexts.get(entity.payload.word));
+            } else {
+                const definition = repl.glossary.get(entity.payload.word).?;
                 var it = std.mem.reverseIterator(definition);
-                while (it.next()) |e|
+                while (it.next()) |e| {
                     try execute_stack.append(e);
+                }
             },
         };
     }
 
     fn feed_token(repl: *Repl, token: []const u8) !void {
         switch (repl.state) {
-            .normal => {
-                if (repl.get_word_id(token)) |word_id|
-                    return repl.execute_word(word_id);
+            .execute => {
+                if (std.meta.stringToEnum(WordId, token)) |keyword| switch (keyword) {
+                    .@":" => {
+                        repl.state = .{ .definition_start = {} };
+                        return;
+                    },
+                    .@";" => return error.NotDefiningFunction,
+                    .IF => return error.TODO,
+                    .THEN => return error.TODO,
+                    .ELSE => return error.TODO,
+                    .ABORT => {},
+                    .FORGET => return error.TODO,
+                    .DEBUG => return try repl.dump_state(),
+                    _ => {},
+                };
 
-                try repl.stack.append(std.fmt.parseInt(Integer, token, 0) catch {
+                if (repl.get_word_id(token)) |word_id| {
+                    return if (repl.primitives.get(word_id)) |prim|
+                        prim(repl, repl.contexts.get(word_id))
+                    else
+                        repl.execute_word(word_id);
+                }
+
+                try repl.stack.append(repl.gpa, std.fmt.parseInt(Integer, token, 0) catch {
                     // TODO: print error
                     return error.UnknownSymbol;
                 });
             },
             .definition_start => {
-                if (std.mem.eql(u8, ":", token))
-                    return error.AlreadyStartedDefinition;
+                if (std.meta.stringToEnum(WordId, token)) |keyword| switch (keyword) {
+                    .@":" => return error.AlreadyStartedDefinition,
+                    // treat as an exit out of defining a word
+                    .ABORT, .@";" => {
+                        repl.state = .{ .execute = {} };
+                        return;
+                    },
+                    .IF => return error.TODO,
+                    .THEN => return error.TODO,
+                    .ELSE => return error.TODO,
+                    .FORGET => return error.TODO,
+                    .DEBUG => return try repl.dump_state(),
+                    _ => {},
+                };
 
                 // TODO: name cannot be a number
                 //if (std.fmt.parseInt(i32, token, 0)) {
@@ -273,27 +247,35 @@ pub const Repl = struct {
             .definition_body => |*state| {
                 errdefer {
                     repl.gpa.free(state.word);
-                    repl.state = .{ .normal = {} };
+                    repl.state = .{ .execute = {} };
                 }
 
-                if (token.len == 1) switch (token[0]) {
-                    else => {},
-                    ':' => return error.AlreadyStartedDefinition,
-                    ';' => {
-                        const word_id: WordId = @enumFromInt(@typeInfo(WordId).Enum.fields.len + repl.count);
-                        repl.count += 1;
+                if (std.meta.stringToEnum(WordId, token)) |keyword| switch (keyword) {
+                    .@":" => return error.AlreadyStartedDefinition,
+                    // treat as an exit out of defining a word
+                    .ABORT => {
+                        repl.state = .{ .execute = {} };
+                        return;
+                    },
+                    .@";" => {
+                        const word_id = repl.create_word_id();
 
-                        std.log.info("created word id for '{s}': {}", .{ state.word, word_id });
-                        try repl.symbols.putNoClobber(state.word, word_id);
+                        try repl.words.putNoClobber(repl.gpa, state.word, word_id);
 
                         var owned = try state.buffer.toOwnedSlice(repl.gpa);
                         errdefer repl.gpa.free(owned);
 
-                        try repl.glossary.putNoClobber(word_id, owned);
+                        try repl.glossary.putNoClobber(repl.gpa, word_id, owned);
 
-                        repl.state = .{ .normal = {} };
+                        repl.state = .{ .execute = {} };
                         return;
                     },
+                    .IF => return error.TODO,
+                    .THEN => return error.TODO,
+                    .ELSE => return error.TODO,
+                    .FORGET => return error.TODO,
+                    .DEBUG => return try repl.dump_state(),
+                    _ => {},
                 };
 
                 try repl.state.definition_body.buffer.append(repl.gpa, entity: {
@@ -323,122 +305,93 @@ pub const Repl = struct {
         while (it.next()) |token| try repl.feed_token(token);
     }
 
-    /// takes ownership of an allocated Definition
-    pub fn create_definition(repl: *Repl, word: []const u8, definition: Definition) !WordId {
-        errdefer definition.deinit(repl.allocator);
-
-        if (repl.symbols.contains(word))
-            return error.DefinitionExists;
-
-        const word_id: WordId = @typeInfo(WordId).Enum.fields.len + repl.count;
-        repl.count += 1;
-
-        std.log.info("created word id: {}", .{word_id});
-        const word_copy = try repl.gpa.dupe(word);
-        errdefer repl.gpa.free(word_copy);
-
-        try repl.symbols.putNoClobber(word_copy, word_id);
-        try repl.glossary.putNoClobber(word_id, definition);
-    }
-
-    fn pop(repl: *Repl) Error!Integer {
+    pub fn pop(repl: *Repl) Error!Integer {
         return repl.stack.popOrNull() orelse error.StackUnderflow;
     }
-};
 
-const builtins = struct {
-    fn @":"(repl: *Repl) Repl.Error!void {
-        assert(repl.state == .normal);
-        repl.state = .{ .definition_start = {} };
+    pub fn push(repl: *Repl, value: Integer) Error!void {
+        try repl.stack.append(repl.gpa, value);
     }
 
-    fn DUP(repl: *Repl) Repl.Error!void {
-        if (repl.stack.items.len == 0)
-            return error.StackUnderflow;
-
-        try repl.stack.append(repl.stack.items[repl.stack.items.len - 1]);
+    pub fn pop_return(repl: *Repl) Error!Integer {
+        return repl.return_stack.popOrNull() orelse error.StackUnderflow;
     }
 
-    fn DROP(repl: *Repl) Repl.Error!void {
-        _ = try repl.pop();
+    pub fn push_return(repl: *Repl, value: Integer) Error!void {
+        try repl.return_stack.append(repl.gpa, value);
     }
 
-    fn SWAP(repl: *Repl) Repl.Error!void {
-        if (repl.stack.items.len < 2)
-            return error.StackUnderflow;
+    pub fn add_primitive(repl: *Repl, opts: PrimitiveOptions) !void {
+        if (std.meta.stringToEnum(WordId, opts.name) != null)
+            return error.CantOverwriteKeyword;
 
-        const len = repl.stack.items.len;
-        std.mem.swap(Repl.Integer, &repl.stack.items[len - 1], &repl.stack.items[len - 2]);
-    }
+        if (repl.words.contains(opts.name))
+            return error.WordExists;
 
-    fn @"."(repl: *Repl) Repl.Error!void {
-        const stdio = std.io.getStdOut().writer();
-        try stdio.print("{}\n", .{try repl.pop()});
-    }
+        const word_id = repl.create_word_id();
+        const name = try repl.gpa.dupe(u8, opts.name);
+        errdefer repl.gpa.free(name);
 
-    fn @"+"(repl: *Repl) Repl.Error!void {
-        const lhs = try repl.pop();
-        const rhs = try repl.pop();
-        try repl.stack.append(lhs + rhs);
-    }
+        try repl.words.putNoClobber(repl.gpa, name, word_id);
+        errdefer _ = repl.words.swapRemove(name);
 
-    fn @"-"(repl: *Repl) Repl.Error!void {
-        const rhs = try repl.pop();
-        const lhs = try repl.pop();
-        try repl.stack.append(lhs - rhs);
-    }
+        try repl.primitives.putNoClobber(repl.gpa, word_id, opts.func);
+        errdefer _ = repl.primitives.swapRemove(word_id);
 
-    fn @"*"(repl: *Repl) Repl.Error!void {
-        const rhs = try repl.pop();
-        const lhs = try repl.pop();
-        try repl.stack.append(lhs * rhs);
-    }
+        if (opts.signature) |sig| {
+            const sig_copy = try repl.gpa.dupe(u8, sig);
+            errdefer repl.gpa.free(sig_copy);
 
-    fn @"/"(repl: *Repl) Repl.Error!void {
-        const denominator = try repl.pop();
-        const numerator = try repl.pop();
+            try repl.signatures.putNoClobber(repl.gpa, word_id, sig_copy);
+        }
+        errdefer if (opts.signature != null) {
+            const entry = repl.signatures.fetchSwapRemove(word_id).?;
+            repl.gpa.free(entry.value);
+        };
 
-        if (denominator == 0)
-            return error.DivisionByZero;
+        if (opts.description) |desc| {
+            const desc_copy = try repl.gpa.dupe(u8, desc);
+            errdefer repl.gpa.free(desc_copy);
 
-        try repl.stack.append(@divFloor(numerator, denominator));
-    }
-
-    fn OVER(repl: *Repl) Repl.Error!void {
-        if (repl.stack.items.len < 2)
-            return error.StackUnderflow;
-
-        try repl.stack.append(repl.stack.items[repl.stack.items.len - 2]);
-    }
-
-    fn ROT(repl: *Repl) Repl.Error!void {
-        if (repl.stack.items.len < 3)
-            return error.StackUnderflow;
-
-        const popped = repl.stack.orderedRemove(repl.stack.items.len - 2);
-        try repl.stack.append(popped);
+            try repl.descriptions.putNoClobber(repl.gpa, word_id, desc_copy);
+        }
+        errdefer if (opts.description != null) {
+            const entry = repl.descriptions.fetchSwapRemove(word_id).?;
+            repl.gpa.free(entry.value);
+        };
     }
 };
+
+fn is_boolean(value: Repl.Integer) bool {
+    return switch (value) {
+        0, -1 => true,
+        else => false,
+    };
+}
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectError = std.testing.expectError;
 
+test {
+    std.testing.refAllDecls(@import("primitives.zig"));
+}
+
 test "feed unknown symbol" {
-    var repl = Repl.init(std.testing.allocator);
+    var repl = try Repl.init(std.testing.allocator);
     defer repl.deinit();
 
     try expectError(error.UnknownSymbol, repl.feed_line("what"));
 }
 
-test "create definiti(u1)on and use it" {
-    var repl = Repl.init(std.testing.allocator);
+test "create definition and use it" {
+    var repl = try Repl.init(std.testing.allocator);
     defer repl.deinit();
 
     try repl.feed_line(": foo  1 + ;");
 
-    try expect(repl.symbols.contains("foo"));
-    try expectEqual(@as(usize, 1), repl.symbols.count());
+    try expect(repl.words.contains("foo"));
+    try expectEqual(@as(usize, 1), repl.words.count());
     try expectEqual(@as(usize, 1), repl.glossary.count());
 
     try repl.feed_line("3 foo");
@@ -446,8 +399,23 @@ test "create definiti(u1)on and use it" {
     try expectEqual(@as(i32, 4), repl.stack.items[0]);
 }
 
+test "create multi lined definition and use it" {
+    var repl = try Repl.init(std.testing.allocator);
+    defer repl.deinit();
+
+    try repl.feed_line(": foo");
+    try repl.feed_line("    1 +");
+    try repl.feed_line(";");
+
+    try expect(repl.words.contains("foo"));
+
+    try repl.feed_line("3 foo");
+    try expectEqual(@as(usize, 1), repl.stack.items.len);
+    try expectEqual(@as(i32, 4), repl.stack.items[0]);
+}
+
 test "feed integer" {
-    var repl = Repl.init(std.testing.allocator);
+    var repl = try Repl.init(std.testing.allocator);
     defer repl.deinit();
 
     try repl.feed_line("28");
@@ -455,61 +423,114 @@ test "feed integer" {
     try expectEqual(@as(i32, 28), repl.stack.items[0]);
 }
 
-test "DUP" {
-    var repl = Repl.init(std.testing.allocator);
+//==============================================================================
+// Conditionals
+//==============================================================================
+
+test "inline if" {
+    var repl = try Repl.init(std.testing.allocator);
     defer repl.deinit();
 
-    try repl.feed_line("28 DUP");
-    try expectEqual(@as(usize, 2), repl.stack.items.len);
-    try expectEqual(@as(i32, 28), repl.stack.items[0]);
-    try expectEqual(@as(i32, 28), repl.stack.items[1]);
-}
-
-test "DROP" {
-    var repl = Repl.init(std.testing.allocator);
-    defer repl.deinit();
-
-    try repl.feed_line("28 DROP");
-    try expectEqual(@as(usize, 0), repl.stack.items.len);
-}
-
-test "SWAP" {
-    var repl = Repl.init(std.testing.allocator);
-    defer repl.deinit();
-
-    try repl.feed_line("1 2 SWAP");
-    try expectEqual(@as(usize, 2), repl.stack.items.len);
-    try expectEqual(@as(i32, 1), repl.stack.items[1]);
-    try expectEqual(@as(i32, 2), repl.stack.items[0]);
-}
-
-test "OVER" {
-    var repl = Repl.init(std.testing.allocator);
-    defer repl.deinit();
-
-    try repl.feed_line("1 2 OVER");
-    try expectEqual(@as(usize, 3), repl.stack.items.len);
-    try expectEqual(@as(i32, 1), repl.stack.items[2]);
-    try expectEqual(@as(i32, 2), repl.stack.items[1]);
-    try expectEqual(@as(i32, 1), repl.stack.items[0]);
-}
-
-test "ROT" {
-    var repl = Repl.init(std.testing.allocator);
-    defer repl.deinit();
-
-    try repl.feed_line("1 2 3 ROT");
-    try expectEqual(@as(usize, 3), repl.stack.items.len);
-    try expectEqual(@as(i32, 1), repl.stack.items[0]);
-    try expectEqual(@as(i32, 3), repl.stack.items[1]);
-    try expectEqual(@as(i32, 2), repl.stack.items[2]);
-}
-
-test "+" {
-    var repl = Repl.init(std.testing.allocator);
-    defer repl.deinit();
-
-    try repl.feed_line("42 1 +");
+    try repl.feed_line("1 2 + 3 = IF 5 THEN");
     try expectEqual(@as(usize, 1), repl.stack.items.len);
-    try expectEqual(@as(i32, 43), repl.stack.items[0]);
+    try expectEqual(@as(i32, 5), repl.stack.items[0]);
 }
+
+test "inline if else" {
+    var repl = try Repl.init(std.testing.allocator);
+    defer repl.deinit();
+
+    try repl.feed_line("2 3 = IF 5 THEN 6 ELSE");
+    try expectEqual(@as(usize, 1), repl.stack.items.len);
+    try expectEqual(@as(i32, 6), repl.stack.items[0]);
+}
+
+test "nested inline if" {
+    return error.TODO;
+}
+
+test "nested inline if else" {
+    return error.TODO;
+}
+
+test "definition with if and use it" {
+    var repl = try Repl.init(std.testing.allocator);
+    defer repl.deinit();
+
+    try repl.feed_line(": ?FULL  12 = IF 42 THEN ;");
+    try repl.feed_line("2 ?FULL");
+    try expectEqual(@as(usize, 0), repl.stack.items.len);
+
+    try repl.feed_line("12 ?FULL");
+    try expectEqual(@as(usize, 1), repl.stack.items.len);
+    try expectEqual(@as(i32, 42), repl.stack.items[0]);
+}
+
+test "definition with if else and use it" {
+    var repl = try Repl.init(std.testing.allocator);
+    defer repl.deinit();
+
+    try repl.feed_line(": ?FULL  12 = IF 42 THEN 50 ELSE ;");
+    try repl.feed_line("2 ?FULL");
+    try expectEqual(@as(usize, 1), repl.stack.items.len);
+    try expectEqual(@as(i32, 50), repl.stack.items[0]);
+
+    try repl.feed_line("12 ?FULL");
+    try expectEqual(@as(usize, 1), repl.stack.items.len);
+    try expectEqual(@as(i32, 42), repl.stack.items[0]);
+}
+
+test "definition with nested if" {
+    return error.TODO;
+}
+
+test "definition with nested if else" {
+    var repl = try Repl.init(std.testing.allocator);
+    defer repl.deinit();
+
+    try repl.feed_line(": EGGSIZE ( n -- )           ");
+    try repl.feed_line("   DUP 18 < IF  1   ELSE     ");
+    try repl.feed_line("   DUP 21 < IF  2   ELSE     ");
+    try repl.feed_line("   DUP 24 < IF  3   ELSE     ");
+    try repl.feed_line("   DUP 27 < IF  4   ELSE     ");
+    try repl.feed_line("   DUP 30 < IF  5   ELSE     ");
+    try repl.feed_line("                42           ");
+    try repl.feed_line("   THEN THEN THEN THEN THEN ;");
+
+    try repl.feed_line("10 EGGSIZE");
+    try repl.feed_line("19 EGGSIZE");
+    try repl.feed_line("23 EGGSIZE");
+    try repl.feed_line("25 EGGSIZE");
+    try repl.feed_line("29 EGGSIZE");
+    try repl.feed_line("50 EGGSIZE");
+
+    try expectEqual(@as(usize, 6), repl.stack.items.len);
+    try expectEqual(@as(i32, 1), repl.stack.items[0]);
+    try expectEqual(@as(i32, 2), repl.stack.items[1]);
+    try expectEqual(@as(i32, 3), repl.stack.items[2]);
+    try expectEqual(@as(i32, 4), repl.stack.items[3]);
+    try expectEqual(@as(i32, 5), repl.stack.items[4]);
+    try expectEqual(@as(i32, 42), repl.stack.items[5]);
+}
+
+//==============================================================================
+// Loops
+//==============================================================================
+
+//==============================================================================
+// Variables
+//==============================================================================
+
+//==============================================================================
+// Constants
+//==============================================================================
+
+//==============================================================================
+// IO
+//==============================================================================
+
+//==============================================================================
+// Compiler Extensions
+//==============================================================================
+
+// adding builtins
