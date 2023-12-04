@@ -13,6 +13,12 @@ pub const defaults = [_]PrimitiveOptions{
         .description = "Print primitive documentation",
         .func = PRIMITIVES,
     },
+    .{
+        .name = "GLOSSARY",
+        .signature = "( -- )",
+        .description = "Print glossary table",
+        .func = GLOSSARY,
+    },
 
     //==========================================================================
     // Stack Manipulation
@@ -23,6 +29,7 @@ pub const defaults = [_]PrimitiveOptions{
         .description = "Duplicate top of the stack",
         .func = DUP,
     },
+    //.{ .name = "?DUP" },
     .{
         .name = "DROP",
         .signature = "( a -- )",
@@ -87,6 +94,41 @@ pub const defaults = [_]PrimitiveOptions{
         .description = "Copy top of the return stack onto the stack",
         .func = @"R@",
     },
+    //==========================================================================
+    // Variables
+    //==========================================================================
+    .{
+        .name = "!",
+        .signature = "( n addr -- )",
+        .description = "Store number to addr",
+        .func = @"!",
+    },
+    .{
+        .name = "@",
+        .signature = "( addr -- n )",
+        .description = "Fetch value at addr",
+        .func = @"@",
+    },
+    .{
+        .name = "?",
+        .signature = "( addr -- )",
+        .description = "Prints contents of address followed by a space",
+        .func = @"?",
+    },
+    .{
+        .name = "+!",
+        .signature = "( n addr -- )",
+        .description = "Add number to contents of address",
+        .func = @"+!",
+    },
+    //.{ .name = "C!" },
+    //.{ .name = "C@" },
+    //==========================================================================
+    // Arrays
+    //==========================================================================
+    //.{ .name = "FILL" },
+    //.{ .name = "ERASE" },
+    //.{ .name = "ERASE" },
 
     //==========================================================================
     // Printing
@@ -96,6 +138,18 @@ pub const defaults = [_]PrimitiveOptions{
         .signature = "( a -- )",
         .description = "Pop and print the top of the stack",
         .func = @".",
+    },
+    .{
+        .name = "CR",
+        .signature = "( -- )",
+        .description = "Print a carriage return",
+        .func = CR,
+    },
+    .{
+        .name = "EMIT",
+        .signature = "( a -- )",
+        .description = "Print number as ascii character",
+        .func = EMIT,
     },
 
     //==========================================================================
@@ -119,30 +173,93 @@ pub const defaults = [_]PrimitiveOptions{
         .description = "Divide lhs by rhs and push result to the stack",
         .func = @"/",
     },
+    //.{ .name = "/MOD" },
+    //.{ .name = "MOD" },
+    //.{ .name = "*/" },
+    //.{ .name = "*/MOD" },
+    //.{ .name = "1+" },
+    //.{ .name = "1-" },
+    //.{ .name = "2+" },
+    //.{ .name = "2-" },
+    //.{ .name = "2*" },
+    //.{ .name = "2/" },
+    //.{ .name = "ABS" },
+    //.{ .name = "NEGATE" },
+    //.{ .name = "MIN" },
+    //.{ .name = "MAX" },
 
     //==========================================================================
     // Comparison
     //==========================================================================
     .{
         .name = "=",
-        .signature = "( lhs rhs -- res )",
-        .description = "Compare the two top entries on the stack, -1 if equal else 0",
+        .signature = "( n1 n2 -- flag )",
+        .description = "Returns true if n1 and n2 are equal",
         .func = @"=",
     },
+    .{
+        .name = "<>",
+        .signature = "( n1 n2 -- flag )",
+        .description = "Returns true if n1 and n2 are not equal",
+        .func = @"<>",
+    },
+    .{
+        .name = "<",
+        .signature = "( n1 n2 -- flag )",
+        .description = "Returns true if n1 is less than n2",
+        .func = @"<",
+    },
+    .{
+        .name = ">",
+        .signature = "( n1 n2 -- flag )",
+        .description = "Returns true if n1 is greater than n2",
+        .func = @">",
+    },
+    .{
+        .name = "U<",
+        .signature = "( u1 u2 -- flag )",
+        .description = "Returns true if u1 is greater than u2 (unsigned)",
+        .func = @"U<",
+    },
+    .{
+        .name = "U>",
+        .signature = "( u1 u2 -- flag )",
+        .description = "Returns true if u1 is greater than u2 (unsigned)",
+        .func = @"U>",
+    },
+    .{
+        .name = "0=",
+        .signature = "( n -- flag )",
+        .description = "Returns true if n is 0",
+        .func = @"0=",
+    },
+    .{
+        .name = "0<",
+        .signature = "( n -- flag )",
+        .description = "Returns true if n is negative",
+        .func = @"0<",
+    },
+    .{
+        .name = "0>",
+        .signature = "( n -- flag )",
+        .description = "Returns true if n is positive",
+        .func = @"0>",
+    },
 };
+
+fn print_with_padding(writer: anytype, string: ?[]const u8, max: usize) !void {
+    var count: usize = if (string) |str| blk: {
+        try writer.writeAll(str);
+        break :blk str.len;
+    } else 0;
+
+    try writer.writeByteNTimes(' ', max - count);
+}
+
 const PrimitiveEntry = struct {
     word: []const u8,
     signature: ?[]const u8,
     description: ?[]const u8,
-
-    fn print_with_padding(writer: anytype, string: ?[]const u8, max: usize) !void {
-        var count: usize = if (string) |str| blk: {
-            try writer.writeAll(str);
-            break :blk str.len;
-        } else 0;
-
-        try writer.writeByteNTimes(' ', max - count);
-    }
 
     fn print(entry: PrimitiveEntry, writer: anytype, max_word_len: usize, max_sig_len: usize, max_desc_len: usize) !void {
         try print_with_padding(writer, entry.word, max_word_len);
@@ -154,7 +271,6 @@ const PrimitiveEntry = struct {
     }
 };
 
-// TODO: aphabetize and pad
 fn PRIMITIVES(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
     const stdout = std.io.getStdOut().writer();
 
@@ -199,6 +315,80 @@ fn PRIMITIVES(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
         try entry.print(stdout, max_word_len, max_sig_len, max_desc_len);
 }
 
+const GlossaryEntry = struct { word: []const u8, definition: Repl.Definition };
+
+fn get_word_from_id(repl: Repl, word_id: Repl.WordId) ?[]const u8 {
+    return for (repl.words.values(), repl.words.keys()) |entry_word_id, word| {
+        if (word_id == entry_word_id)
+            break word;
+    } else null;
+}
+
+fn GLOSSARY(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const stdout = std.io.getStdOut().writer();
+
+    var list = std.ArrayList(GlossaryEntry).init(repl.gpa);
+    defer list.deinit();
+
+    var word_max_len = "WORD".len;
+    for (repl.glossary.keys(), repl.glossary.values()) |word_id, definition| {
+        const entry = GlossaryEntry{
+            .word = get_word_from_id(repl.*, word_id).?,
+            .definition = definition,
+        };
+
+        try list.append(entry);
+
+        word_max_len = @max(entry.word.len, word_max_len);
+    }
+
+    try stdout.writeByte('\n');
+    try print_with_padding(stdout, "WORD", word_max_len);
+    try stdout.writeAll(" DEFINITION\n");
+
+    try stdout.writeByteNTimes('=', 80);
+    try stdout.writeByte('\n');
+
+    for (list.items) |item| {
+        try print_with_padding(stdout, item.word, word_max_len);
+        try stdout.writeAll(" :");
+        for (item.definition) |def_entry| {
+            try stdout.writeByte(' ');
+            switch (def_entry.tag) {
+                .integer => try stdout.print("{}", .{def_entry.payload.integer}),
+                .word => switch (def_entry.payload.word) {
+                    .@":",
+                    .@";",
+                    .ABORT,
+                    .FORGET,
+                    .DEBUG,
+                    .VARIABLE,
+                    .CONSTANT,
+                    .IF,
+                    .THEN,
+                    .ELSE,
+                    .DO,
+                    .LOOP,
+                    .@"+LOOP",
+                    .LEAVE,
+                    .BEGIN,
+                    .UNTIL,
+                    .WHILE,
+                    .REPEAT,
+                    .AGAIN,
+                    => inline for (@typeInfo(Repl.WordId).Enum.fields) |field| {
+                        if (def_entry.payload.word == @field(Repl.WordId, field.name))
+                            try stdout.writeAll(field.name);
+                    },
+                    _ => try stdout.print("{s}", .{get_word_from_id(repl.*, def_entry.payload.word).?}),
+                },
+            }
+        }
+
+        try stdout.writeAll(" ;\n");
+    }
+}
+
 fn DUP(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
     if (repl.stack.items.len == 0)
         return error.StackUnderflow;
@@ -219,9 +409,54 @@ fn SWAP(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
 }
 
 fn @"="(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
-    const lhs = try repl.pop();
     const rhs = try repl.pop();
+    const lhs = try repl.pop();
     try repl.stack.append(repl.gpa, if (lhs == rhs) -1 else 0);
+}
+
+fn @"<>"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const rhs = try repl.pop();
+    const lhs = try repl.pop();
+    try repl.stack.append(repl.gpa, if (lhs != rhs) -1 else 0);
+}
+
+fn @"<"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const rhs = try repl.pop();
+    const lhs = try repl.pop();
+    try repl.stack.append(repl.gpa, if (lhs < rhs) -1 else 0);
+}
+
+fn @">"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const rhs = try repl.pop();
+    const lhs = try repl.pop();
+    try repl.stack.append(repl.gpa, if (lhs > rhs) -1 else 0);
+}
+
+fn @"U<"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const rhs: u32 = @bitCast(try repl.pop());
+    const lhs: u32 = @bitCast(try repl.pop());
+    try repl.stack.append(repl.gpa, if (lhs < rhs) -1 else 0);
+}
+
+fn @"U>"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const rhs: u32 = @bitCast(try repl.pop());
+    const lhs: u32 = @bitCast(try repl.pop());
+    try repl.stack.append(repl.gpa, if (lhs > rhs) -1 else 0);
+}
+
+fn @"0="(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const n = try repl.pop();
+    try repl.stack.append(repl.gpa, if (n == 0) -1 else 0);
+}
+
+fn @"0<"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const n = try repl.pop();
+    try repl.stack.append(repl.gpa, if (n < 0) -1 else 0);
+}
+
+fn @"0>"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const n = try repl.pop();
+    try repl.stack.append(repl.gpa, if (n > 0) -1 else 0);
 }
 
 fn @"."(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
@@ -229,9 +464,23 @@ fn @"."(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
     try stdio.print("{}\n", .{try repl.pop()});
 }
 
+fn CR(_: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const stdio = std.io.getStdOut().writer();
+    try stdio.writeAll("\r\n");
+}
+
+fn EMIT(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const stdio = std.io.getStdOut().writer();
+    const n = try repl.pop();
+    if (n < 0 or n > 255)
+        return error.InvalidInput;
+
+    try stdio.print("{c}\n", .{@as(u8, @intCast(n))});
+}
+
 fn @"+"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
-    const lhs = try repl.pop();
     const rhs = try repl.pop();
+    const lhs = try repl.pop();
     try repl.stack.append(repl.gpa, lhs + rhs);
 }
 
@@ -291,6 +540,44 @@ fn XOR(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
     const lhs = try repl.pop();
 
     try repl.stack.append(repl.gpa, rhs ^ lhs);
+}
+
+fn @"!"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const index = try repl.pop();
+    const n = try repl.pop();
+
+    if (index >= repl.variables_buf.items.len)
+        return error.OutOfBounds;
+
+    repl.variables_buf.items[@intCast(index)] = n;
+}
+
+fn @"@"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const index = try repl.pop();
+
+    if (index >= repl.variables_buf.items.len)
+        return error.OutOfBounds;
+
+    try repl.push(repl.variables_buf.items[@intCast(index)]);
+}
+
+fn @"?"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const index = try repl.pop();
+    if (index >= repl.variables_buf.items.len)
+        return error.OutOfBounds;
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("{} ", .{repl.variables_buf.items[@intCast(index)]});
+}
+
+fn @"+!"(repl: *Repl, _: ?*anyopaque) Repl.Error!void {
+    const index = try repl.pop();
+    const n = try repl.pop();
+
+    if (index >= repl.variables_buf.items.len)
+        return error.OutOfBounds;
+
+    repl.variables_buf.items[@intCast(index)] += n;
 }
 
 //==========================================================================
